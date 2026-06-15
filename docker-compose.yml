@@ -1,0 +1,18 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: pulse-mongo
+    # Change streams and the snapshot reads we rely on require a replica set,
+    # so even for local single-node dev we run with --replSet.
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - "27017:27017"
+    healthcheck:
+      # Idempotently initiate the replica set on the first healthy tick.
+      test: >
+        mongosh --quiet --eval
+        "try { rs.status().ok } catch (e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'127.0.0.1:27017'}]}) }"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 3s

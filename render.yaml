@@ -1,0 +1,26 @@
+# Render Blueprint — deploys the Pulse gateway.
+# MongoDB is NOT provisioned by Render; use a free MongoDB Atlas M0 cluster
+# (which is a replica set, so time-series collections and change streams work)
+# and paste its connection string into the MONGODB_URI env var below.
+#
+# Steps:
+#   1. Create a free cluster at https://www.mongodb.com/cloud/atlas (M0).
+#      Add a database user and allow access from anywhere (0.0.0.0/0).
+#   2. Push this repo to GitHub.
+#   3. Render Dashboard -> New -> Blueprint -> select repo -> Apply.
+#   4. When prompted, set MONGODB_URI to your Atlas connection string.
+services:
+  - type: web
+    name: pulse
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: oregon
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGO_DB
+        value: pulse
+      - key: MONGODB_URI
+        sync: false # set in the Render dashboard (Atlas connection string)

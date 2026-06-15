@@ -1,0 +1,43 @@
+{
+  "name": "pulse",
+  "version": "1.0.0",
+  "description": "Real-time event analytics engine on MongoDB — time-series ingestion, aggregation-pipeline analytics (trends, funnels, retention), and live dashboards via change streams.",
+  "keywords": [
+    "analytics",
+    "mongodb",
+    "time-series",
+    "aggregation-pipeline",
+    "funnel",
+    "retention",
+    "change-streams",
+    "real-time",
+    "telemetry"
+  ],
+  "license": "MIT",
+  "author": "Ankit Kumar",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "dev": "tsx watch src/server.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "mongo:up": "docker compose up -d mongo",
+    "mongo:down": "docker compose down"
+  },
+  "dependencies": {
+    "express": "^5.0.1",
+    "mongodb": "^6.10.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.7.0",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

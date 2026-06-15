@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pulse — Real-Time Event Analytics</title>
+<script src="/vendor/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg:#ffffff; --fg:#1a1a1a; --muted:#6b7280; --line:#e5e7eb; --soft:#f6f7f9;
+    --accent:#4f46e5; --green:#16a34a; --red:#dc2626;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1000px;margin:0 auto;padding:48px 24px 80px}
+  header{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:8px}
+  h1{font-size:20px;font-weight:600;margin:0;letter-spacing:-.2px}
+  .sub{color:var(--muted);font-size:14px;margin-top:6px}
+  .status{display:inline-flex;align-items:center;gap:7px;font-size:13px;color:var(--muted)}
+  .dot{width:7px;height:7px;border-radius:50%;background:#c4c8cf}
+  .dot.ok{background:var(--green)} .dot.bad{background:var(--red)}
+
+  .label{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:0 0 12px}
+  section{margin-top:32px}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  button.btn{font:inherit;font-size:14px;font-weight:500;border-radius:8px;padding:9px 16px;cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--fg);transition:background .12s}
+  button.btn:hover{background:var(--soft)}
+  button.btn:disabled{opacity:.45;cursor:not-allowed}
+  button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+  /* keep the indigo bg on hover (the generic .btn:hover sets a light bg) */
+  button.primary:hover{background:#4338ca;border-color:#4338ca}
+  button.toggle.on{background:var(--green);color:#fff;border-color:var(--green)}
+
+  .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .kpi{background:#fff;padding:18px 16px}
+  .kpi .n{font-size:28px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.5px}
+  .kpi .l{font-size:12px;color:var(--muted);margin-top:2px}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media (max-width:760px){.grid2{grid-template-columns:1fr}.kpis{grid-template-columns:1fr}}
+  .card{border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card h3{font-size:13px;font-weight:600;margin:0 0 12px}
+  .cardhead{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+  .cardhead h3{margin:0}
+  .chartbox{position:relative;height:240px}
+  .sel{font:inherit;font-size:13px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--fg);cursor:pointer}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .segbtn{font:inherit;font-size:12px;padding:4px 12px;border:0;background:#fff;color:var(--muted);cursor:pointer}
+  .segbtn.on{background:var(--accent);color:#fff}
+  .mono{font-family:var(--mono);font-size:12.5px}
+  .alert{display:inline-block;background:#fef2f2;color:var(--red);border:1px solid #fecaca;border-radius:6px;padding:2px 8px;font-weight:600;font-size:12px}
+  .anom{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--line)}
+  .anom:last-child{border-bottom:0}
+  .anom .z{color:var(--red);font-weight:600}
+
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:center;padding:6px 8px;border-bottom:1px solid var(--line)}
+  th:first-child,td:first-child{text-align:left;font-family:var(--mono);color:var(--muted)}
+  .cell{display:inline-block;min-width:42px;padding:3px 0;border-radius:4px;color:#fff;font-variant-numeric:tabular-nums}
+  footer{margin-top:44px;padding-top:20px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
+  code{font-family:var(--mono);font-size:12.5px;background:var(--soft);padding:1px 5px;border-radius:4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Pulse</h1>
+      <div class="sub">Real-time event analytics on MongoDB — high-volume ingestion, aggregation pipelines, change streams.</div>
+    </div>
+    <div class="status"><span id="dot" class="dot"></span><span id="statusText">connecting…</span></div>
+  </header>
+
+  <section>
+    <div class="label">Controls</div>
+    <div class="row">
+      <button type="button" class="btn primary" id="seed">Seed 7 days of data</button>
+      <button type="button" class="btn toggle" id="live">▶ Start live stream</button>
+      <button type="button" class="btn" id="reset">Reset</button>
+      <span class="sub" id="hint" style="margin-left:6px"></span>
+    </div>
+  </section>
+
+  <section>
+    <div class="label">Segment</div>
+    <div class="row" id="filterBar">
+      <select class="sel" id="f_country"><option value="">All countries</option></select>
+      <select class="sel" id="f_plan"><option value="">All plans</option></select>
+      <select class="sel" id="f_browser"><option value="">All browsers</option></select>
+      <button type="button" class="btn" id="clearFilters">Clear</button>
+      <span class="sub" id="segHint" style="margin-left:4px"></span>
+    </div>
+  </section>
+
+  <section>
+    <div class="label">Live (last 5 min, via change streams)</div>
+    <div class="kpis">
+      <div class="kpi"><div class="n" id="kEvents">0</div><div class="l">Events</div></div>
+      <div class="kpi"><div class="n" id="kUsers">0</div><div class="l">Active users</div></div>
+      <div class="kpi"><div class="n" id="kRate">0</div><div class="l">Events / sec (live)</div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="label">Sessions (30-min inactivity gap)</div>
+    <div class="kpis">
+      <div class="kpi"><div class="n" id="sCount">0</div><div class="l">Sessions</div></div>
+      <div class="kpi"><div class="n" id="sDur">0s</div><div class="l">Avg duration</div></div>
+      <div class="kpi"><div class="n" id="sEv">0</div><div class="l">Avg events / session</div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="label">Anomaly detection (rolling z-score on volume)</div>
+    <div class="card" id="anomalyCard">
+      <div id="anomalySummary" class="sub">No anomalies detected.</div>
+      <div id="anomalyList" class="mono" style="margin-top:8px"></div>
+    </div>
+  </section>
+
+  <section class="grid2">
+    <div class="card">
+      <div class="cardhead">
+        <h3>Event volume</h3>
+        <div class="seg" id="trendSource">
+          <button type="button" class="segbtn on" data-src="raw">raw</button>
+          <button type="button" class="segbtn" data-src="rollup">rollup</button>
+        </div>
+      </div>
+      <div class="chartbox"><canvas id="trendChart"></canvas></div>
+      <div class="sub" id="rollupInfo" style="margin-top:8px"></div>
+    </div>
+    <div class="card">
+      <h3>Conversion funnel</h3>
+      <div class="chartbox"><canvas id="funnelChart"></canvas></div>
+    </div>
+  </section>
+
+  <section class="grid2">
+    <div class="card">
+      <h3>Top events</h3>
+      <div class="chartbox"><canvas id="topChart"></canvas></div>
+    </div>
+    <div class="card">
+      <h3>Retention cohorts (% returning by day)</h3>
+      <div id="retention" style="overflow-x:auto"></div>
+    </div>
+  </section>
+
+  <footer>
+    Aggregation pipelines power every chart. Endpoints: <code>/api/trends</code> ·
+    <code>/api/funnel</code> · <code>/api/retention</code> · <code>/api/top</code> ·
+    <code>/api/stream</code> (SSE).
+  </footer>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => Number(n).toLocaleString();
+
+// ---- Charts ----
+// Each chart gets a FRESH options object (built by a factory). Sharing one
+// object across charts lets Chart.js mutate the common `scales` and corrupts
+// sibling charts — which is why the bar charts previously drew no bars.
+// NB: variable names must NOT match the canvas element ids (trendChart, etc.) —
+// an element id creates a read-only global and a top-level `const` of the same
+// name throws a compile-time SyntaxError that silently kills the whole script.
+const vertOpts = () => ({
+  responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
+  scales:{ x:{grid:{display:false}}, y:{beginAtZero:true, grid:{color:'#f1f2f4'}} },
+});
+const horizOpts = () => ({
+  responsive:true, maintainAspectRatio:false, indexAxis:'y', plugins:{legend:{display:false}},
+  scales:{ x:{beginAtZero:true, grid:{color:'#f1f2f4'}}, y:{grid:{display:false}} },
+});
+const cTrend = new Chart($('trendChart'), {
+  type:'line',
+  data:{labels:[],datasets:[{data:[],borderColor:'#4f46e5',backgroundColor:'rgba(79,70,229,.08)',fill:true,tension:.3,pointRadius:0,borderWidth:2}]},
+  options: vertOpts(),
+});
+const cFunnel = new Chart($('funnelChart'), {
+  type:'bar',
+  data:{labels:[],datasets:[{data:[],backgroundColor:'#4f46e5',borderRadius:6}]},
+  options: horizOpts(),
+});
+const cTop = new Chart($('topChart'), {
+  type:'bar',
+  data:{labels:[],datasets:[{data:[],backgroundColor:'#16a34a',borderRadius:6}]},
+  options: horizOpts(),
+});
+
+// ---- Segmentation state ----
+const filters = { country:'', plan:'', browser:'' };
+let trendSource = 'raw';
+// Build a query string from the active segment filters plus extra params.
+function qs(extra = {}){
+  const p = new URLSearchParams();
+  for (const [k,v] of Object.entries(filters)) if(v) p.set(k, v);
+  for (const [k,v] of Object.entries(extra)) if(v!=null && v!=='') p.set(k, v);
+  const s = p.toString();
+  return s ? '?'+s : '';
+}
+
+// ---- Data loaders (all segment-aware) ----
+async function loadTrends(){
+  const r = await fetch('/api/trends'+qs({unit:'hour', source:trendSource})); const d = await r.json();
+  cTrend.data.labels = d.map(p => new Date(p.t).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit'}));
+  cTrend.data.datasets[0].data = d.map(p => p.count);
+  cTrend.update();
+}
+async function loadFunnel(){
+  const r = await fetch('/api/funnel'+qs()); const d = await r.json();
+  cFunnel.data.labels = d.map(s => `${s.step} (${Math.round(s.overall*100)}%)`);
+  cFunnel.data.datasets[0].data = d.map(s => s.users);
+  cFunnel.update();
+}
+async function loadTop(){
+  const r = await fetch('/api/top'+qs({dimension:'event', limit:8})); const d = await r.json();
+  cTop.data.labels = d.map(x => x.key);
+  cTop.data.datasets[0].data = d.map(x => x.count);
+  cTop.update();
+}
+async function loadLive(){
+  const r = await fetch('/api/live'+qs({minutes:5})); const d = await r.json();
+  $('kEvents').textContent = fmt(d.events);
+  $('kUsers').textContent = fmt(d.users);
+}
+async function loadSessions(){
+  const r = await fetch('/api/sessions'+qs()); const d = await r.json();
+  $('sCount').textContent = fmt(d.sessions);
+  $('sDur').textContent = (d.avgDurationSec>=60 ? Math.round(d.avgDurationSec/60)+'m' : d.avgDurationSec+'s');
+  $('sEv').textContent = d.avgEventsPerSession;
+}
+async function loadAnomalies(){
+  const r = await fetch('/api/anomalies'+qs({unit:'hour'})); const d = await r.json();
+  const hits = d.filter(a => a.isAnomaly).sort((a,b)=>b.z-a.z).slice(0,5);
+  if(!hits.length){ $('anomalySummary').innerHTML = 'No anomalies detected.'; $('anomalyList').innerHTML=''; return; }
+  $('anomalySummary').innerHTML = `<span class="alert">⚠ ${hits.length} spike${hits.length>1?'s':''} detected</span>`;
+  $('anomalyList').innerHTML = hits.map(a =>
+    `<div class="anom"><span>${new Date(a.t).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit'})}</span>`
+    + `<span>${fmt(a.count)} events (avg ${a.mean}) <span class="z">z=${a.z}</span></span></div>`).join('');
+}
+async function loadRollupInfo(){
+  const r = await fetch('/api/rollups'); const d = await r.json();
+  const ago = d.lastRunAt ? Math.max(0, Math.round((Date.now()-new Date(d.lastRunAt))/1000)) : null;
+  $('rollupInfo').textContent =
+    `Rollups: ${fmt(d.buckets)} hourly buckets · ${fmt(d.totalEvents)} events`
+    + (ago!=null ? ` · refreshed ${ago}s ago` : '');
+}
+function color(p){ // 0..1 -> indigo scale
+  const a = 0.12 + p*0.78;
+  return `rgba(79,70,229,${a.toFixed(2)})`;
+}
+async function loadRetention(){
+  const r = await fetch('/api/retention'+qs({days:7})); const d = await r.json();
+  if(!d.length){ $('retention').innerHTML = '<div class="sub">No cohorts yet — seed some data.</div>'; return; }
+  const days = d[0].retention.length;
+  let h = '<table><thead><tr><th>Cohort</th><th>Users</th>';
+  for(let i=0;i<days;i++) h += `<th>D${i}</th>`;
+  h += '</tr></thead><tbody>';
+  for(const row of d){
+    const day = new Date(row.cohort).toLocaleDateString([], {month:'short',day:'numeric'});
+    h += `<tr><td>${day}</td><td>${fmt(row.size)}</td>`;
+    for(const p of row.retention){
+      h += `<td><span class="cell" style="background:${color(p)}">${Math.round(p*100)}%</span></td>`;
+    }
+    h += '</tr>';
+  }
+  $('retention').innerHTML = h + '</tbody></table>';
+}
+async function refreshAll(){
+  await Promise.all([loadTrends(),loadFunnel(),loadTop(),loadLive(),loadRetention(),loadSessions(),loadAnomalies(),loadRollupInfo()]);
+}
+
+// ---- Filter dropdowns + trend source toggle ----
+async function populateFilters(){
+  for (const dim of ['country','plan','browser']){
+    try {
+      const vals = await (await fetch('/api/values?dimension='+dim)).json();
+      const sel = $('f_'+dim);
+      const cur = sel.value;
+      sel.length = 1; // keep the "All ..." option
+      for (const v of vals){ const o = document.createElement('option'); o.value=v; o.textContent=v; sel.appendChild(o); }
+      sel.value = cur;
+    } catch {}
+  }
+}
+for (const dim of ['country','plan','browser']){
+  $('f_'+dim).onchange = (e) => { filters[dim] = e.target.value; updateSegHint(); refreshAll(); };
+}
+$('clearFilters').onclick = () => {
+  for (const dim of ['country','plan','browser']){ filters[dim]=''; $('f_'+dim).value=''; }
+  updateSegHint(); refreshAll();
+};
+function updateSegHint(){
+  const active = Object.entries(filters).filter(([,v])=>v).map(([k,v])=>`${k}=${v}`);
+  $('segHint').textContent = active.length ? 'segment: '+active.join(', ') : '';
+}
+document.querySelectorAll('#trendSource .segbtn').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('#trendSource .segbtn').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on'); trendSource = b.dataset.src; loadTrends();
+  };
+});
+
+// ---- Controls ----
+$('seed').onclick = async () => {
+  $('seed').disabled = true; $('hint').textContent = 'seeding…';
+  const r = await fetch('/api/seed',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({days:7})});
+  const d = await r.json();
+  $('hint').textContent = `inserted ${fmt(d.inserted)} events`;
+  $('seed').disabled = false;
+  await fetch('/api/rollups/run',{method:'POST'}).catch(()=>{});
+  await populateFilters();
+  await refreshAll();
+};
+$('reset').onclick = async () => {
+  await fetch('/api/reset',{method:'POST'});
+  $('hint').textContent = 'cleared';
+  await populateFilters();
+  await refreshAll();
+};
+
+let liveTimer = null, liveCount = 0;
+$('live').onclick = () => {
+  const btn = $('live');
+  if(liveTimer){
+    clearInterval(liveTimer); liveTimer = null;
+    btn.classList.remove('on'); btn.textContent = '▶ Start live stream';
+  } else {
+    btn.classList.add('on'); btn.textContent = '⏸ Stop live stream';
+    let ticks = 0;
+    liveTimer = setInterval(async () => {
+      await fetch('/api/simulate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({count:30})});
+      loadLive(); loadTrends(); loadTop(); loadFunnel();
+      // Heavier panels refresh a bit less often.
+      if(++ticks % 4 === 0){ loadSessions(); loadAnomalies(); loadRollupInfo(); }
+    }, 1000);
+  }
+};
+
+// ---- SSE: live events/sec from change streams ----
+let windowEvents = [];
+function connectSSE(){
+  const es = new EventSource('/api/stream');
+  es.onopen = () => { $('dot').className = 'dot ok'; $('statusText').textContent = 'live'; };
+  es.onerror = () => { $('dot').className = 'dot bad'; $('statusText').textContent = 'reconnecting…'; };
+  es.onmessage = (m) => {
+    try {
+      const d = JSON.parse(m.data);
+      if(d.type === 'event'){ windowEvents.push(Date.now()); }
+    } catch {}
+  };
+}
+// events/sec = events seen via the change stream over a 2s window, averaged.
+// A 2s window (rather than 1s) keeps the number steady between burst inserts.
+setInterval(() => {
+  const cutoff = Date.now() - 2000;
+  windowEvents = windowEvents.filter(t => t > cutoff);
+  $('kRate').textContent = fmt(Math.round(windowEvents.length / 2));
+}, 500);
+
+// On first load, seed 7 days of history if the DB is empty, so the funnel,
+// retention and event-volume charts (all historical) are populated immediately.
+// Live streaming then layers real-time events on top.
+async function init(){
+  let hasData = false;
+  try { hasData = (await (await fetch('/api/trends?unit=day')).json()).length > 0; } catch {}
+  if(!hasData){
+    $('hint').textContent = 'seeding demo data…';
+    await fetch('/api/seed',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({days:7})}).catch(()=>{});
+    // Build the first rollups so the rollup view + indicator have data.
+    await fetch('/api/rollups/run',{method:'POST'}).catch(()=>{});
+    $('hint').textContent = 'demo data ready';
+  }
+  await populateFilters();
+  await refreshAll();
+}
+connectSSE();
+init();
+setInterval(loadLive, 5000);
+</script>
+</body>
+</html>
