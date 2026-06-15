@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Pulse — Real-Time Event Analytics</title>
 <script src="/vendor/chart.umd.min.js"></script>
+<script src="/vendor/chartjs-chart-geo.umd.min.js"></script>
 <style>
   :root {
     --bg:#ffffff; --fg:#1a1a1a; --muted:#6b7280; --line:#e5e7eb; --soft:#f6f7f9;
@@ -51,9 +52,13 @@
   .segbtn.on{background:var(--accent);color:#fff}
   .mono{font-family:var(--mono);font-size:12.5px}
   .alert{display:inline-block;background:#fef2f2;color:var(--red);border:1px solid #fecaca;border-radius:6px;padding:2px 8px;font-weight:600;font-size:12px}
-  .anom{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--line)}
+  .anom{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--line);gap:10px}
   .anom:last-child{border-bottom:0}
   .anom .z{color:var(--red);font-weight:600}
+  .btn.small{font-size:12px;padding:5px 10px}
+  .rule{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line);gap:10px}
+  .rule:last-child{border-bottom:0}
+  input.sel::placeholder{color:#9aa3b2}
 
   table{width:100%;border-collapse:collapse;font-size:13px}
   th,td{text-align:center;padding:6px 8px;border-bottom:1px solid var(--line)}
@@ -86,9 +91,9 @@
   <section>
     <div class="label">Segment</div>
     <div class="row" id="filterBar">
-      <select class="sel" id="f_country"><option value="">All countries</option></select>
-      <select class="sel" id="f_plan"><option value="">All plans</option></select>
-      <select class="sel" id="f_browser"><option value="">All browsers</option></select>
+      <select class="sel" id="f_country" aria-label="Filter by country"><option value="">All countries</option></select>
+      <select class="sel" id="f_plan" aria-label="Filter by plan"><option value="">All plans</option></select>
+      <select class="sel" id="f_browser" aria-label="Filter by browser"><option value="">All browsers</option></select>
       <button type="button" class="btn" id="clearFilters">Clear</button>
       <span class="sub" id="segHint" style="margin-left:4px"></span>
     </div>
@@ -149,10 +154,65 @@
     </div>
   </section>
 
+  <section>
+    <div class="label">Explore — build your own query</div>
+    <div class="card">
+      <div class="row" style="margin-bottom:12px">
+        <select class="sel" id="ex_measure" aria-label="Measure">
+          <option value="events">Event count</option>
+          <option value="users">Unique users</option>
+        </select>
+        <select class="sel" id="ex_event" aria-label="Event"><option value="">All events</option></select>
+        <select class="sel" id="ex_breakdown" aria-label="Breakdown">
+          <option value="none">No breakdown</option>
+          <option value="event">by event</option>
+          <option value="country">by country</option>
+          <option value="plan">by plan</option>
+          <option value="browser">by browser</option>
+        </select>
+        <select class="sel" id="ex_unit" aria-label="Granularity">
+          <option value="day">by day</option>
+          <option value="hour">by hour</option>
+        </select>
+      </div>
+      <div class="chartbox" style="height:280px"><canvas id="exploreChart"></canvas></div>
+    </div>
+  </section>
+
+  <section class="grid2">
+    <div class="card">
+      <h3>Geography — events by country</h3>
+      <div class="chartbox" style="height:300px"><canvas id="geoChart"></canvas></div>
+    </div>
+    <div class="card">
+      <h3>Top countries</h3>
+      <div id="geoList" class="mono"></div>
+    </div>
+  </section>
+
+  <section class="grid2">
+    <div class="card">
+      <h3>Alert rules</h3>
+      <div id="alertRules"></div>
+      <div class="row" style="margin-top:12px;gap:6px">
+        <input class="sel" id="al_name" placeholder="name" aria-label="Alert name" style="width:110px" />
+        <select class="sel" id="al_event" aria-label="Alert event"><option value="">any event</option></select>
+        <select class="sel" id="al_cmp" aria-label="Comparator"><option value="gt">&gt;</option><option value="lt">&lt;</option></select>
+        <input class="sel" id="al_value" type="number" value="5" aria-label="Threshold value" style="width:64px" />
+        <span class="sub">/min</span>
+        <button type="button" class="btn small" id="newAlert">Add</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Triggered alerts</h3>
+      <div id="alertFeed" class="mono"></div>
+    </div>
+  </section>
+
   <footer>
-    Aggregation pipelines power every chart. Endpoints: <code>/api/trends</code> ·
-    <code>/api/funnel</code> · <code>/api/retention</code> · <code>/api/top</code> ·
-    <code>/api/stream</code> (SSE).
+    Aggregation pipelines power every chart. Endpoints: <code>/api/explore</code> ·
+    <code>/api/funnel</code> · <code>/api/retention</code> · <code>/api/geo</code> ·
+    <code>/api/anomalies</code> · <code>/api/alerts</code> · <code>/api/stream</code> (SSE).
   </footer>
 </div>
 
@@ -271,21 +331,28 @@ async function loadRetention(){
   $('retention').innerHTML = h + '</tbody></table>';
 }
 async function refreshAll(){
-  await Promise.all([loadTrends(),loadFunnel(),loadTop(),loadLive(),loadRetention(),loadSessions(),loadAnomalies(),loadRollupInfo()]);
+  await Promise.all([
+    loadTrends(),loadFunnel(),loadTop(),loadLive(),loadRetention(),loadSessions(),loadAnomalies(),loadRollupInfo(),
+    loadExplore(),loadGeo(),loadAlerts(),loadAlertFeed(),
+  ]);
 }
 
 // ---- Filter dropdowns + trend source toggle ----
+function fillSelect(sel, vals, keepFirst = true){
+  const cur = sel.value;
+  sel.length = keepFirst ? 1 : 0;
+  for (const v of vals){ const o = document.createElement('option'); o.value = v; o.textContent = v; sel.appendChild(o); }
+  sel.value = cur;
+}
 async function populateFilters(){
   for (const dim of ['country','plan','browser']){
-    try {
-      const vals = await (await fetch('/api/values?dimension='+dim)).json();
-      const sel = $('f_'+dim);
-      const cur = sel.value;
-      sel.length = 1; // keep the "All ..." option
-      for (const v of vals){ const o = document.createElement('option'); o.value=v; o.textContent=v; sel.appendChild(o); }
-      sel.value = cur;
-    } catch {}
+    try { fillSelect($('f_'+dim), await (await fetch('/api/values?dimension='+dim)).json()); } catch {}
   }
+  try {
+    const evs = await (await fetch('/api/values?dimension=event')).json();
+    fillSelect($('ex_event'), evs);  // keeps "All events"
+    fillSelect($('al_event'), evs);  // keeps "any event"
+  } catch {}
 }
 for (const dim of ['country','plan','browser']){
   $('f_'+dim).onchange = (e) => { filters[dim] = e.target.value; updateSegHint(); refreshAll(); };
@@ -304,6 +371,100 @@ document.querySelectorAll('#trendSource .segbtn').forEach(b => {
     b.classList.add('on'); trendSource = b.dataset.src; loadTrends();
   };
 });
+
+// ---- Explore (self-serve query builder) ----
+const palette = ['#4f46e5','#16a34a','#dc2626','#d97706','#0891b2','#7c3aed','#db2777','#65a30d'];
+let cExplore;
+async function loadExplore(){
+  const measure = $('ex_measure').value, breakdown = $('ex_breakdown').value;
+  const events = $('ex_event').value, unit = $('ex_unit').value;
+  const series = await (await fetch('/api/explore'+qs({measure, breakdown, unit, events}))).json();
+  const labelSet = new Set(); series.forEach(s => s.points.forEach(p => labelSet.add(p.t)));
+  const labels = [...labelSet].sort();
+  const fmtLabels = labels.map(t => new Date(t).toLocaleDateString([], {month:'short',day:'numeric'}));
+  const datasets = series.map((s,i) => {
+    const m = Object.fromEntries(s.points.map(p => [p.t, p.value]));
+    return { label:s.key, data:labels.map(t => m[t] ?? 0), borderColor:palette[i%palette.length],
+             backgroundColor:'transparent', tension:.3, pointRadius:0, borderWidth:2 };
+  });
+  if(!cExplore){
+    cExplore = new Chart($('exploreChart'), { type:'line', data:{labels:fmtLabels, datasets},
+      options:{ responsive:true, maintainAspectRatio:false,
+        plugins:{legend:{display:true, position:'bottom', labels:{boxWidth:10, font:{size:11}}}},
+        scales:{ x:{grid:{display:false}}, y:{beginAtZero:true, grid:{color:'#f1f2f4'}} } } });
+  } else { cExplore.data.labels = fmtLabels; cExplore.data.datasets = datasets; cExplore.update(); }
+}
+['ex_measure','ex_event','ex_breakdown','ex_unit'].forEach(id => $(id).onchange = loadExplore);
+
+// ---- Geography (choropleth) ----
+if(window.ChartGeo){
+  Chart.register(ChartGeo.ChoroplethController, ChartGeo.ProjectionScale, ChartGeo.ColorScale, ChartGeo.GeoFeature);
+}
+const CODE2NAME = {US:'United States of America', IN:'India', UK:'United Kingdom', DE:'Germany', BR:'Brazil', CA:'Canada', AU:'Australia'};
+let worldFeatures = null, cGeo;
+async function ensureWorld(){
+  if(worldFeatures || !window.ChartGeo) return;
+  const topo = await (await fetch('/vendor/countries-110m.json')).json();
+  worldFeatures = ChartGeo.topojson.feature(topo, topo.objects.countries).features;
+}
+function flag(code){
+  let c = code === 'UK' ? 'GB' : code;
+  if(!/^[A-Za-z]{2}$/.test(c)) return '';
+  return String.fromCodePoint(...[...c.toUpperCase()].map(ch => 0x1F1E6 + ch.charCodeAt(0) - 65));
+}
+async function loadGeo(){
+  const rows = await (await fetch('/api/geo'+qs())).json();
+  $('geoList').innerHTML = rows.slice(0,8).map(r =>
+    `<div class="anom"><span>${flag(r.country)} ${r.country}</span><span>${fmt(r.count)}</span></div>`).join('')
+    || '<div class="sub">No data.</div>';
+  await ensureWorld();
+  if(!worldFeatures) return; // geo lib unavailable — list still works
+  const byName = {}; for(const r of rows){ byName[CODE2NAME[r.country] || r.country] = r.count; }
+  const data = worldFeatures.map(f => ({ feature:f, value: byName[f.properties.name] || 0 }));
+  if(!cGeo){
+    cGeo = new Chart($('geoChart'), { type:'choropleth',
+      data:{ labels:worldFeatures.map(f => f.properties.name), datasets:[{ outline:worldFeatures, data }] },
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
+        scales:{ projection:{axis:'x', projection:'equalEarth'},
+          color:{axis:'x', quantize:5, interpolate:'blues',
+            legend:{position:'bottom-left', align:'bottom', length:90, width:14, margin:8}} } } });
+  } else { cGeo.data.datasets[0].data = data; cGeo.update(); }
+}
+
+// ---- Alerts ----
+async function loadAlerts(){
+  const rules = await (await fetch('/api/alerts')).json();
+  $('alertRules').innerHTML = rules.map(r => {
+    const desc = r.type === 'threshold'
+      ? `${r.event || 'events'} ${r.comparator === 'lt' ? '<' : '>'} ${r.value} / ${r.windowMinutes}m`
+      : `anomaly z≥${r.zThreshold} on ${r.event || 'all'}`;
+    return `<div class="rule"><div><b>${r.name}</b><div class="sub">${desc}</div></div>`
+      + `<div class="row" style="gap:6px"><button type="button" class="btn small toggle ${r.enabled?'on':''}" data-t="${r.id}">${r.enabled?'on':'off'}</button>`
+      + `<button type="button" class="btn small" data-d="${r.id}">✕</button></div></div>`;
+  }).join('') || '<div class="sub">No rules.</div>';
+  $('alertRules').querySelectorAll('[data-t]').forEach(b => b.onclick = async () => { await fetch('/api/alerts/'+b.dataset.t+'/toggle',{method:'POST'}); loadAlerts(); });
+  $('alertRules').querySelectorAll('[data-d]').forEach(b => b.onclick = async () => { await fetch('/api/alerts/'+b.dataset.d,{method:'DELETE'}); loadAlerts(); });
+}
+async function loadAlertFeed(){
+  const evs = await (await fetch('/api/alerts/events')).json();
+  $('alertFeed').innerHTML = evs.slice(0,10).map(e =>
+    `<div class="anom"><span><span class="alert">⚠</span> ${e.ruleName}</span>`
+    + `<span class="sub">${e.message} · ${new Date(e.at).toLocaleTimeString()}</span></div>`).join('')
+    || '<div class="sub">No alerts yet — start the live stream to trip one.</div>';
+}
+$('newAlert').onclick = async () => {
+  const body = {
+    name: $('al_name').value || 'New alert',
+    type: 'threshold',
+    event: $('al_event').value || undefined,
+    comparator: $('al_cmp').value,
+    value: Number($('al_value').value) || 1,
+    windowMinutes: 1,
+  };
+  await fetch('/api/alerts', {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body)});
+  $('al_name').value = '';
+  loadAlerts();
+};
 
 // ---- Controls ----
 $('seed').onclick = async () => {
@@ -336,7 +497,7 @@ $('live').onclick = () => {
       await fetch('/api/simulate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({count:30})});
       loadLive(); loadTrends(); loadTop(); loadFunnel();
       // Heavier panels refresh a bit less often.
-      if(++ticks % 4 === 0){ loadSessions(); loadAnomalies(); loadRollupInfo(); }
+      if(++ticks % 4 === 0){ loadSessions(); loadAnomalies(); loadRollupInfo(); loadGeo(); loadExplore(); loadAlertFeed(); }
     }, 1000);
   }
 };
@@ -351,6 +512,7 @@ function connectSSE(){
     try {
       const d = JSON.parse(m.data);
       if(d.type === 'event'){ windowEvents.push(Date.now()); }
+      else if(d.type === 'alert'){ loadAlertFeed(); $('statusText').textContent = 'alert: '+d.ruleName; setTimeout(()=>{ $('statusText').textContent='live'; }, 4000); }
     } catch {}
   };
 }

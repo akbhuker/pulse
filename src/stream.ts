@@ -37,6 +37,11 @@ function broadcast(payload: unknown): void {
   for (const res of clients) res.write(frame);
 }
 
+/** Push an arbitrary payload to all SSE clients (used for live alerts). */
+export function emit(payload: unknown): void {
+  broadcast(payload);
+}
+
 /** Start watching inserts and relaying them to SSE clients. Self-healing. */
 export function startChangeStream(): void {
   if (stream) return;

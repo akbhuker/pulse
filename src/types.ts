@@ -80,3 +80,45 @@ export interface RollupStats {
   totalEvents: number;
   lastRunAt: string | null;
 }
+
+/** One line/series returned by the Explore query builder. */
+export interface ExploreSeries {
+  key: string;
+  points: { t: string; value: number }[];
+}
+
+export interface GeoRow {
+  country: string;
+  count: number;
+}
+
+export type AlertType = 'threshold' | 'anomaly';
+export type Comparator = 'gt' | 'lt';
+
+export interface AlertRule {
+  id: string;
+  name: string;
+  type: AlertType;
+  /** Event to watch; if omitted, all events. */
+  event?: string;
+  /** threshold: window to count over. */
+  windowMinutes?: number;
+  /** threshold: how to compare the count to `value`. */
+  comparator?: Comparator;
+  /** threshold: the value to compare against. */
+  value?: number;
+  /** anomaly: z-score that counts as a spike (default 3). */
+  zThreshold?: number;
+  /** Optional outbound webhook fired when the rule triggers. */
+  webhookUrl?: string;
+  enabled: boolean;
+  lastTriggeredAt?: string | null;
+}
+
+export interface AlertEvent {
+  ruleId: string;
+  ruleName: string;
+  message: string;
+  value?: number;
+  at: string;
+}

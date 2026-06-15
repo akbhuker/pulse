@@ -13,6 +13,16 @@ import {
   rollupStats,
   resetRollups,
 } from './rollups';
+import {
+  listRules,
+  createRule,
+  deleteRule,
+  toggleRule,
+  recentEvents,
+  evaluateAlerts,
+  seedDefaultAlerts,
+  resetAlertEvents,
+} from './alerts';
 import type { Filters, TimeUnit } from './types';
 
 function parseDate(v: unknown): Date | undefined {
@@ -25,8 +35,9 @@ function parseDate(v: unknown): Date | undefined {
 // plan, browser, ...) is treated as a `meta.props.<key>` filter, so the API
 // segments by any dimension without code changes.
 const RESERVED = new Set([
-  'unit', 'from', 'to', 'event', 'steps', 'days', 'limit',
+  'unit', 'from', 'to', 'event', 'events', 'steps', 'days', 'limit',
   'dimension', 'minutes', 'source', 'threshold', 'window', 'gapMinutes',
+  'measure', 'breakdown',
 ]);
 
 function parseFilters(q: Request['query']): Filters {
@@ -56,6 +67,11 @@ async function main(): Promise<void> {
   await runRollup().catch(() => undefined);
   const ROLLUP_INTERVAL_MS = 30_000;
   setInterval(() => void runRollup().catch(() => undefined), ROLLUP_INTERVAL_MS);
+
+  // Alerting: seed default rules, then evaluate them on a short cadence.
+  await seedDefaultAlerts().catch(() => undefined);
+  const ALERT_INTERVAL_MS = 15_000;
+  setInterval(() => void evaluateAlerts().catch(() => undefined), ALERT_INTERVAL_MS);
 
   const app = express();
   app.use(express.json({ limit: '4mb' }));
@@ -204,6 +220,45 @@ async function main(): Promise<void> {
     }),
   );
 
+  // Explore: self-serve query builder.
+  app.get(
+    '/api/explore',
+    wrap(async (req, res) => {
+      const eventsParam = typeof req.query.events === 'string' ? req.query.events : '';
+      const data = await analytics.explore({
+        events: eventsParam ? eventsParam.split(',').filter(Boolean) : undefined,
+        breakdown: typeof req.query.breakdown === 'string' ? req.query.breakdown : undefined,
+        measure: req.query.measure === 'users' ? 'users' : 'events',
+        unit: (req.query.unit as TimeUnit) ?? 'day',
+        from: parseDate(req.query.from),
+        to: parseDate(req.query.to),
+        filters: parseFilters(req.query),
+      });
+      res.json(data);
+    }),
+  );
+
+  // Geo: events by country.
+  app.get(
+    '/api/geo',
+    wrap(async (req, res) => {
+      res.json(
+        await analytics.geo({
+          from: parseDate(req.query.from),
+          to: parseDate(req.query.to),
+          filters: parseFilters(req.query),
+        }),
+      );
+    }),
+  );
+
+  // Alerting: rules CRUD + recent triggered events.
+  app.get('/api/alerts', wrap(async (_req, res) => { res.json(await listRules()); }));
+  app.post('/api/alerts', wrap(async (req, res) => { res.json(await createRule(req.body ?? {})); }));
+  app.delete('/api/alerts/:id', wrap(async (req, res) => { await deleteRule(String(req.params.id)); res.json({ ok: true }); }));
+  app.post('/api/alerts/:id/toggle', wrap(async (req, res) => { await toggleRule(String(req.params.id)); res.json({ ok: true }); }));
+  app.get('/api/alerts/events', wrap(async (_req, res) => { res.json(await recentEvents()); }));
+
   // --- Real-time stream ---
   app.get('/api/stream', sseHandler);
 
@@ -231,6 +286,7 @@ async function main(): Promise<void> {
     wrap(async (_req, res) => {
       await resetEvents();
       await resetRollups();
+      await resetAlertEvents();
       restartChangeStream(); // dropping the collection killed the old watch
       res.json({ ok: true });
     }),

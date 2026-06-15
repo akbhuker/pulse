@@ -25,6 +25,9 @@ Most "analytics" side projects stop at counting rows. Pulse implements the queri
 - **Anomaly detection** — rolling z-score on event volume (`$setWindowFields`) flags traffic spikes with no fixed threshold.
 - **Sessionization** — group events into sessions by a 30-minute inactivity gap (`$setWindowFields` + `$shift`); reports session count, duration, and events/session.
 - **Pre-aggregated rollups** — a background job materialises hourly summaries via `$merge` so dashboards read a small summary collection instead of scanning raw events.
+- **Explore** — a self-serve query builder: choose a measure (event count / unique users), events, a breakdown dimension, and granularity; the aggregation pipeline is assembled from that input and returns one series per breakdown value.
+- **Geo** — events aggregated by country, rendered as a world choropleth.
+- **Alerting** — user-defined rules (threshold or anomaly) evaluated on a schedule that record triggers, push them to the dashboard over SSE, and optionally fire a webhook.
 - **Live activity** — events and unique users in a rolling window, streamed to the dashboard in real time.
 
 ## Why MongoDB
@@ -94,7 +97,10 @@ Open the dashboard, click **Seed 7 days of data** to populate funnels and retent
 | GET | `/api/sessions?gapMinutes=30` | Sessionization metrics |
 | GET | `/api/values?dimension=country` | Distinct values (filter UI) |
 | GET | `/api/rollups` · POST `/api/rollups/run` | Rollup stats / manual rebuild |
-| GET | `/api/stream` | SSE feed of inserts (change stream) |
+| GET | `/api/explore?measure=users&breakdown=country&unit=day` | Self-serve query builder |
+| GET | `/api/geo` | Events by country (for the choropleth) |
+| GET/POST/DELETE | `/api/alerts` · `/api/alerts/:id` · `/api/alerts/events` | Alert rule CRUD + trigger history |
+| GET | `/api/stream` | SSE feed of inserts + alerts (change stream) |
 | POST | `/api/seed` · `/api/simulate` · `/api/reset` | Demo data helpers |
 
 Any query param that isn't a reserved keyword is treated as a segmentation filter, e.g. `GET /api/funnel?country=US&plan=pro`. Trends also accept `?source=rollup` to serve from the pre-aggregated collection.

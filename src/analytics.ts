@@ -1,8 +1,10 @@
 import { events } from './db';
 import type {
   AnomalyPoint,
+  ExploreSeries,
   Filters,
   FunnelStep,
+  GeoRow,
   RetentionRow,
   SessionStats,
   TimeUnit,
@@ -245,12 +247,12 @@ export async function distinctValues(dimension: string, limit = 50): Promise<str
  * traffic (abuse, a bug, a campaign) lights up without any fixed threshold.
  */
 export async function anomalies(
-  opts: Range & { unit?: TimeUnit; window?: number; threshold?: number } = {},
+  opts: Range & { unit?: TimeUnit; window?: number; threshold?: number; event?: string } = {},
 ): Promise<AnomalyPoint[]> {
   const unit: TimeUnit = opts.unit ?? 'hour';
   const window = opts.window ?? 24;
   const threshold = opts.threshold ?? 3;
-  const match = rangeMatch(opts);
+  const match = rangeMatch(opts, opts.event ? { 'meta.event': opts.event } : {});
 
   const rows = await events()
     .aggregate<{ t: Date; count: number; mean: number; std: number; z: number }>([
@@ -388,4 +390,86 @@ export async function live(
     ])
     .toArray();
   return { events: rows[0]?.events ?? 0, users: rows[0]?.users ?? 0, windowMinutes: minutes };
+}
+
+/**
+ * Explore — a self-serve query builder. Given a measure (event count or unique
+ * users), an optional set of events, an optional breakdown dimension, a time
+ * granularity, a range and filters, it builds the aggregation dynamically and
+ * returns one time-series per breakdown value (top 8 by volume).
+ *
+ * This is the engine behind a Mixpanel/Amplitude-style "Explore" screen: the
+ * pipeline shape is assembled from user input rather than hard-coded.
+ */
+export async function explore(
+  opts: Range & {
+    events?: string[];
+    breakdown?: string;
+    measure?: 'events' | 'users';
+    unit?: TimeUnit;
+  },
+): Promise<ExploreSeries[]> {
+  const unit: TimeUnit = opts.unit ?? 'day';
+  const measure = opts.measure ?? 'events';
+  const extra: Record<string, unknown> =
+    opts.events && opts.events.length > 0 ? { 'meta.event': { $in: opts.events } } : {};
+  const match = rangeMatch(opts, extra);
+
+  const breakdownField =
+    !opts.breakdown || opts.breakdown === 'none'
+      ? null
+      : opts.breakdown === 'event'
+        ? '$meta.event'
+        : `$meta.props.${opts.breakdown}`;
+
+  const groupId: Record<string, unknown> = { t: { $dateTrunc: { date: '$ts', unit } } };
+  if (breakdownField) groupId.key = breakdownField;
+
+  const pipeline: Record<string, unknown>[] = [
+    { $match: match },
+    {
+      $group: {
+        _id: groupId,
+        v: measure === 'users' ? { $addToSet: '$meta.distinctId' } : { $sum: 1 },
+      },
+    },
+  ];
+  if (measure === 'users') pipeline.push({ $project: { _id: 1, v: { $size: '$v' } } });
+  pipeline.push({ $sort: { '_id.t': 1 } });
+
+  const rows = await events()
+    .aggregate<{ _id: { t: Date; key?: unknown }; v: number }>(pipeline)
+    .toArray();
+
+  const seriesMap = new Map<string, { t: string; value: number }[]>();
+  const totals = new Map<string, number>();
+  const defaultKey = measure === 'users' ? 'unique users' : 'events';
+  for (const r of rows) {
+    const key = breakdownField ? String(r._id.key ?? '(none)') : defaultKey;
+    if (!seriesMap.has(key)) seriesMap.set(key, []);
+    seriesMap.get(key)!.push({ t: r._id.t.toISOString(), value: r.v });
+    totals.set(key, (totals.get(key) ?? 0) + r.v);
+  }
+
+  // Keep the top 8 series by total volume so the chart stays readable.
+  const topKeys = [...totals.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([k]) => k);
+  return topKeys.map((key) => ({ key, points: seriesMap.get(key) ?? [] }));
+}
+
+/** Events grouped by country — powers the geo map. */
+export async function geo(opts: Range = {}): Promise<GeoRow[]> {
+  const match = rangeMatch(opts, { 'meta.props.country': { $exists: true, $ne: null } });
+  const rows = await events()
+    .aggregate<{ _id: unknown; count: number }>([
+      { $match: match },
+      { $group: { _id: '$meta.props.country', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+    ])
+    .toArray();
+  return rows
+    .filter((r) => r._id != null && r._id !== '')
+    .map((r) => ({ country: String(r._id), count: r.count }));
 }
